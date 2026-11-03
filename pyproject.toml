@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools==84.1.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-genesis"
+version = "0.2.0"
+description = "A model-independent foundation for a growing local AI companion"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+genesis-demo = "genesis.adapters.console:main"
+genesis-persistence-demo = "genesis.adapters.persistence_demo:main"
+genesis-ollama-demo = "genesis.adapters.ollama_demo:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["genesis", "genesis.adapters", "genesis.models", "genesis.storage"]
+include-package-data = false

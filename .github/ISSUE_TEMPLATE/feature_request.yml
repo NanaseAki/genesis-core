@@ -1,0 +1,14 @@
+name: 功能建议
+description: 说明使用目标与边界，不提供私人聊天实例
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 目标与合成示例
+      description: 请区分当前实现与未来提议，不粘贴个人资料。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 范围、数据流向与验证方式

@@ -1,0 +1,178 @@
+name: Windows foundation
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        description: Full baseline commit SHA for the manual comparison
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Test source tree (no dependency installation)
+        run: python -I -S tools/check_loopback_tests.py
+      - name: Prepare explicitly pinned build backend (CI bootstrap uses PyPI)
+        run: |
+          python -m pip install --disable-pip-version-check --no-deps --only-binary=:all: "setuptools==84.1.0"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -B -I -c "import sys,setuptools; assert setuptools.__version__ == '84.1.0'; print(sys.version); print(setuptools.__version__)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify real release canaries and controlled artifacts (offline)
+        run: |
+          $releaseCommit = (git --no-replace-objects rev-parse --verify HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $releaseCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid checkout SHA' }
+          $buildPython = (Get-Command python).Source
+          $releaseOutput = Join-Path $env:RUNNER_TEMP ('genesis-controlled-' + [guid]::NewGuid().ToString('N'))
+          python -B -I -S tools/check_release.py --commit $releaseCommit --build-python $buildPython
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -B -I -S tools/release_prepare.py --repository $pwd.Path --commit $releaseCommit --output $releaseOutput --build-python $buildPython --private-preparation
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -B -I -S tools/release_prepare.py --repository $pwd.Path --commit $releaseCommit --output $releaseOutput --build-python $buildPython --verify-only --roundtrip --private-preparation
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "GENESIS_CHECKED_RELEASE=$releaseOutput" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Verify full source snapshot without Git metadata
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $checkout = $pwd.Path
+          $releaseCommit = (git --no-replace-objects rev-parse --verify HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $releaseCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid checkout SHA' }
+          $releaseOutput = $env:GENESIS_CHECKED_RELEASE
+          if (-not $releaseOutput -or -not [IO.Path]::IsPathFullyQualified($releaseOutput)) { throw 'Missing verified release output' }
+          $snapshot = Join-Path $releaseOutput 'source'
+          $python = (Get-Command python -CommandType Application).Source
+          foreach ($key in @('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_NAMESPACE','GIT_CONFIG_PARAMETERS','GIT_CONFIG_COUNT','PYTHONHOME','PYTHONPATH')) {
+            if ([Environment]::GetEnvironmentVariable($key)) { throw "Unexpected process binding: $key" }
+          }
+          # Reuse the existing verifier: exact files/bytes, ordinary directories,
+          # and no enclosing worktree/bare repository or linked output ancestor.
+          & $python -B -I -S tools/release_prepare.py --repository $checkout --commit $releaseCommit --output $releaseOutput --verify-only --private-preparation
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # These locked tests use top-level classes and four-space test methods.
+          # Derive IDs from text without importing/discovering a second test run.
+          $expected = @(foreach ($file in Get-ChildItem -LiteralPath (Join-Path $snapshot 'tests') -File -Filter 'test_*.py') {
+            $className = $null
+            foreach ($line in [IO.File]::ReadAllLines($file.FullName)) {
+              if ($line -cmatch '^class ([A-Za-z_][A-Za-z0-9_]*)\(') { $className = $Matches[1] }
+              elseif ($line -cmatch '^    def (test_[A-Za-z0-9_]+)\(') {
+                if (-not $className) { throw 'Unbound test method' }
+                $file.BaseName + '.' + $className + '.' + $Matches[1]
+              }
+            }
+          })
+          if ($expected.Count -ne 289 -or @($expected | Sort-Object -Unique).Count -ne 289) { throw 'Test inventory differs from approved baseline' }
+          Push-Location -LiteralPath $snapshot
+          try {
+            # Tee records decoded, merged CI text; this is not raw binary evidence.
+            & $python -B -I -S tools/check_loopback_tests.py 2>&1 | Tee-Object -Variable snapshotLog
+            $testExit = $LASTEXITCODE
+          } finally {
+            Pop-Location
+          }
+          Write-Output "NO_GIT_TEST_EXIT=$testExit"
+          # Always attempt the post-check after a normally returned test process.
+          & $python -B -I -S tools/release_prepare.py --repository $checkout --commit $releaseCommit --output $releaseOutput --verify-only --private-preparation
+          $verifyExit = $LASTEXITCODE
+          if ($testExit -ne 0) { exit $testExit }
+          if ($verifyExit -ne 0) { exit $verifyExit }
+          $lines = @($snapshotLog | ForEach-Object { $_.ToString() -split '\r?\n' })
+          $found = @(); $pending = $null
+          foreach ($line in $lines) {
+            if ($pending) {
+              if ($line -cnotmatch '^.+ \.\.\. ok$') { throw 'Non-ok described test result' }
+              $found += $pending; $pending = $null
+            } elseif ($line -cmatch '^(test_[A-Za-z0-9_]+) \(([^\s()]+)\)(?: \.\.\. (.+))?$') {
+              $method = $Matches[1]; $id = $Matches[2]; $status = $Matches[3]
+              if ($id.Split('.')[-1] -cne $method) { throw 'Inconsistent test ID' }
+              if ($status) {
+                if ($status -cne 'ok') { throw 'Non-ok test result' }
+                $found += $id
+              } else { $pending = $id }
+            } elseif ($line.Contains(' ... ') -or $line -cmatch '^(FAIL|ERROR|FAILED|OK \(|UNEXPECTED|skipped)') { throw 'Unrecognized or non-success test result' }
+          }
+          if ($pending -or $found.Count -ne 289 -or @($found | Sort-Object -Unique).Count -ne 289 -or @(Compare-Object $expected $found -CaseSensitive).Count) { throw 'Individual test results differ' }
+          if (@($found | Where-Object { $_.StartsWith('test_release_replacement.ReplacementSecurityTests.') }).Count -ne 6) { throw 'Six replacement results missing' }
+          if (@($lines | Where-Object { $_ -cmatch '^Ran 289 tests in [0-9]+(?:\.[0-9]+)?s$' }).Count -ne 1 -or @($lines | Where-Object { $_ -ceq 'OK' }).Count -ne 1) { throw 'Exact test summary missing or duplicated' }
+          Write-Output 'NO_GIT_FULL_SUITE=289; REPLACEMENT=6; SOURCE_AND_ARTIFACTS_UNCHANGED=true'
+      - name: Install verified wheel and verify entry points (offline)
+        run: |
+          $verifiedWheel = @(Get-ChildItem -LiteralPath (Join-Path $env:GENESIS_CHECKED_RELEASE 'dist') -Filter '*.whl' -File)
+          if ($verifiedWheel.Count -ne 1) { throw 'Expected one verified wheel' }
+          python -m pip install --disable-pip-version-check --no-index --no-deps $verifiedWheel[0].FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I tools/check_loopback_tests.py --installed
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I -m genesis
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          genesis-demo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify installed persistence console (temporary synthetic data)
+        run: python -I tools/check_persistence_entry.py
+      - name: Verify installed synthetic Ollama protocol console (no Ollama)
+        run: genesis-ollama-demo
+      - name: Check whitespace
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          python -I -S tools/check_ci_diff.py
+          $diffExit = $LASTEXITCODE
+          if ($diffExit -ne 0) { exit $diffExit }
+          if ($env:GITHUB_EVENT_NAME -ceq 'push') {
+            $event = Get-Content -LiteralPath $env:GITHUB_EVENT_PATH -Raw | ConvertFrom-Json -AsHashtable
+            if ($event.before -ceq ('0' * 40) -and $event.ref -ceq ('refs/heads/' + $event.repository.default_branch)) {
+              if ($event.created -isnot [bool] -or -not $event.created) { throw 'Invalid root creation flag' }
+              if (($event.repository.id -isnot [long] -and $event.repository.id -isnot [int]) -or $event.repository.id -le 0) { throw 'Invalid repository ID' }
+              if ($event.repository.full_name -isnot [string] -or $event.repository.full_name -cnotmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or $event.repository.full_name -cne $env:GITHUB_REPOSITORY) { throw 'Invalid repository identity' }
+              if ($event.repository.default_branch -isnot [string] -or $event.repository.default_branch -cnotmatch '^[A-Za-z0-9_./-]+$') { throw 'Invalid default branch' }
+              if ($event.after -isnot [string] -or $event.after -cnotmatch '^[0-9a-f]{40}$' -or $env:GITHUB_SHA -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid event SHA' }
+              $actualHead = (git --no-replace-objects rev-parse --verify HEAD).Trim()
+              if ($LASTEXITCODE -ne 0 -or $actualHead -cne $event.after -or $actualHead -cne $env:GITHUB_SHA) { throw 'Root checkout mismatch' }
+              $commitLines = @(git --no-replace-objects cat-file commit $actualHead)
+              if ($LASTEXITCODE -ne 0) { throw 'Cannot read original commit' }
+              $parentless = $true
+              foreach ($line in $commitLines) {
+                if ($line -ceq '') { break }
+                if ($line.StartsWith('parent ')) { $parentless = $false }
+              }
+              if (-not $parentless) { throw 'Root has a parent' }
+              $receipt = [ordered]@{
+                event_name = $env:GITHUB_EVENT_NAME
+                repository_id = $event.repository.id
+                repository_full_name = $event.repository.full_name
+                default_branch = $event.repository.default_branch
+                before = $event.before
+                created = $event.created
+                ref = $event.ref
+                after = $event.after
+                github_sha = $env:GITHUB_SHA
+                actual_head = $actualHead
+                parentless = $parentless
+                diff_exit_code = $diffExit
+              }
+              Write-Output ('ROOT_PUSH_EVIDENCE=' + ($receipt | ConvertTo-Json -Compress))
+            }
+          }

@@ -1,0 +1,25 @@
+name: 合成问题报告
+description: 仅提交脱敏、可复现的工程问题；安全或隐私内容不要公开提交
+body:
+  - type: markdown
+    attributes:
+      value: 请先阅读 SECURITY.md。私密报告渠道尚待确认，不要上传数据库、真实聊天、凭据、伙伴档案或原始私有日志。
+  - type: checkboxes
+    id: synthetic
+    attributes:
+      label: 数据检查
+      options:
+        - label: 我只使用合成内容，已移除个人数据与凭据。
+          required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 版本、环境与最小合成复现
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期、实际行为与安全的错误类别
+    validations:
+      required: true
