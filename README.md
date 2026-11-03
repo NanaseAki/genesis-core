@@ -8,7 +8,7 @@
 
 M1、M2-A、M2-B1、Open Source Preparation P1 和 P2-A 已验收合并。P2-A 历史基线通过 Windows Python 3.12/3.13 各 270 项源码与安装回归；R4 在受控发行边界内技术关闭。Apache-2.0、项目归属、贡献政策和许可证专项发行校验已实施。
 
-原字节干净基线已按批准的修订验收合同通过 Python 3.12/3.13 本地限定验收，各 289 项完整测试（其中 6 项 replacement）。本候选仅完成文档与有限 CI 的静态适配，修改后文件集尚未重新运行测试或构建；原基线结果不代表本候选、新仓库首次 Push/CI 或公开发行已通过。验收范围与证据限制见 [发行准备说明](docs/RELEASE_PREPARATION.md)。
+原字节干净基线已按批准的修订验收合同通过 Python 3.12/3.13 本地限定验收，各 289 项完整测试（其中 6 项 replacement）。参考提交 `0696e2279df7ef87a95a2ba5a6934440cbe166c4` 已在新 Private 仓库通过双版本远端 CI，具体范围及首次根推送事件字段的缺口见下文“Windows CI 的提交范围”。当前文档修订基于该参考提交，仅完成静态核验，尚未对修改后文件集重新运行测试、构建或 CI；参考提交与历史基线结果均不构成本修订的动态验收，也不代表获准公开或发行。验收范围与证据限制见 [发行准备说明](docs/RELEASE_PREPARATION.md)。
 
 所有者已确认 Apache-2.0、NanaseAki 与本人核实的 GitHub noreply、独立干净快照方案 B，以及优先 PVR。旧仓库按既定方案独立保留 Private，未来公共 Core 为唯一公开开发主线，不继承旧 Git/GitHub 附属历史。许可证实施不等于获准创建公共仓库、Public、Release 或 PyPI 发布；目标仓库及 PVR 状态须在相应阶段重新核实，本候选不声明公开入口或 PVR 已启用。项目独立开发，不代表 Neuro-sama、AIRI、Live2D 或 Ollama 官方。
 
@@ -133,9 +133,9 @@ tools/run_tests.py     无安装测试入口
 - Pull Request：检查事件 base/head 的共同祖先到 PR head；测试仍使用 GitHub 默认检出的合并结果。
 - 手动运行：必须填写完整 `base_sha`，与该次检出 SHA 比较。
 
-除上述经严格验证的根提交分支外，缺失提交、远端基线或共同祖先会明确失败，不自动联网补取或回退到 `HEAD^`；标签推送不触发此工作流。M2-B1、P1 与 P2-A 的历史远端验收归属保留；新独立目标的首次 Push/CI 尚待验收，不能沿用旧 CI 或原字节基线本地结果。矩阵保留 3.12/3.13、contents:read、真实发行 Canary/受控构建/安全重建和验证后 wheel 安装，并独立运行持久化及合成 HTTP console。
+除上述经严格验证的根提交分支外，缺失提交、远端基线或共同祖先会明确失败，不自动联网补取或回退到 `HEAD^`；标签推送不触发此工作流。M2-B1、P1 与 P2-A 的历史远端验收归属保留。截至 2026-11-03，新独立仓库仍为 Private；参考提交 [`0696e2279df7ef87a95a2ba5a6934440cbe166c4`](https://github.com/NanaseAki/genesis-core/commit/0696e2279df7ef87a95a2ba5a6934440cbe166c4) 的普通推送及 [双版本 CI](https://github.com/NanaseAki/genesis-core/actions/runs/41638648429) 已核验通过。首次根推送的原始事件字段仍未取得，所有者已接受推送回执、远端提交及根差异核验作为限定替代证据；这不等于复原首次事件，首次 CI 失败记录继续保留。上述结论只属于所列提交，不自动覆盖后续改动，也不代表获准公开或发行。
 
-本候选在安装 wheel 前增加已验证无 `.git` 源码快照的全量测试，测试前后再次 verify-only；首次默认分支根 Push 仅输出限定事件字段及原差异检查结果。上述 CI 改动仅经静态核验，尚未运行；其日志是平台文本记录，不冒充本机显式审计的原始二进制流或 OS 进程证据。
+矩阵保留 Python 3.12/3.13、`contents: read`、真实发行 Canary、受控构建、安全重建及验证后 wheel 安装，并独立运行持久化与合成 HTTP console。所列 CI 在每个版本分别完成源码、无 `.git` 快照和安装后三轮测试，每轮均为 289 个唯一测试，包含 6 项 replacement 测试；无 `.git` 快照测试前后再次 verify-only。工作流为首次默认分支根 Push 设计了限定事件字段输出及根差异检查，但不能据此补称历史缺失字段已取得。CI 日志是平台文本记录，不冒充本机显式审计的原始二进制流或 OS 进程证据。
 
 PR 合并检出与 head SHA 的区别见 [GitHub 事件文档](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)。
 
