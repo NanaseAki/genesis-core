@@ -30,28 +30,48 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      - id: setup_python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Validate the setup-python executable
+        env:
+          GENESIS_SETUP_PYTHON: ${{ steps.setup_python.outputs.python-path }}
+          GENESIS_SETUP_VERSION: ${{ steps.setup_python.outputs.python-version }}
+          GENESIS_EXPECTED_PYTHON: ${{ matrix.python-version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $python = $env:GENESIS_SETUP_PYTHON
+          if (-not $python -or $python.IndexOfAny([char[]]"`r`n`0") -ge 0 -or -not [IO.Path]::IsPathFullyQualified($python) -or -not (Test-Path -LiteralPath $python -PathType Leaf)) { throw 'Invalid setup-python executable output' }
+          if ($env:GENESIS_SETUP_VERSION -cnotmatch ('^' + [regex]::Escape($env:GENESIS_EXPECTED_PYTHON) + '\.[0-9]+$')) { throw 'setup-python version differs from matrix' }
+          # Validate the selected executable itself, without importing project or site code.
+          $identityText = @(& $python -B -I -S -c 'import json,sys; print(json.dumps({"executable":sys.executable,"version":".".join(map(str,sys.version_info[:3]))}))')
+          if ($LASTEXITCODE -ne 0 -or $identityText.Count -ne 1) { throw 'Interpreter identity request failed' }
+          $identity = $identityText[0] | ConvertFrom-Json
+          if (-not [String]::Equals([IO.Path]::GetFullPath($identity.executable), [IO.Path]::GetFullPath($python), [StringComparison]::OrdinalIgnoreCase) -or $identity.version -cne $env:GENESIS_SETUP_VERSION) { throw 'Interpreter identity differs from setup-python outputs' }
+          Write-Output ('CI_INTERPRETER=' + ($identity | ConvertTo-Json -Compress))
+          "GENESIS_CI_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Test source tree (no dependency installation)
-        run: python -I -S tools/check_loopback_tests.py
+        run: |
+          & $env:GENESIS_CI_PYTHON -I -S tools/check_loopback_tests.py
       - name: Prepare explicitly pinned build backend (CI bootstrap uses PyPI)
         run: |
-          python -m pip install --disable-pip-version-check --no-deps --only-binary=:all: "setuptools==84.1.0"
+          & $env:GENESIS_CI_PYTHON -m pip install --disable-pip-version-check --no-deps --only-binary=:all: "setuptools==84.1.0"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -B -I -c "import sys,setuptools; assert setuptools.__version__ == '84.1.0'; print(sys.version); print(setuptools.__version__)"
+          & $env:GENESIS_CI_PYTHON -B -I -c "import sys,setuptools; assert setuptools.__version__ == '84.1.0'; print(sys.version); print(setuptools.__version__)"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify real release canaries and controlled artifacts (offline)
         run: |
           $releaseCommit = (git --no-replace-objects rev-parse --verify HEAD).Trim()
           if ($LASTEXITCODE -ne 0 -or $releaseCommit -cnotmatch '^[0-9a-f]{40}$') { throw 'Invalid checkout SHA' }
-          $buildPython = (Get-Command python).Source
+          $buildPython = $env:GENESIS_CI_PYTHON
           $releaseOutput = Join-Path $env:RUNNER_TEMP ('genesis-controlled-' + [guid]::NewGuid().ToString('N'))
-          python -B -I -S tools/check_release.py --commit $releaseCommit --build-python $buildPython
+          & $env:GENESIS_CI_PYTHON -B -I -S tools/check_release.py --commit $releaseCommit --build-python $buildPython
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -B -I -S tools/release_prepare.py --repository $pwd.Path --commit $releaseCommit --output $releaseOutput --build-python $buildPython --private-preparation
+          & $env:GENESIS_CI_PYTHON -B -I -S tools/release_prepare.py --repository $pwd.Path --commit $releaseCommit --output $releaseOutput --build-python $buildPython --private-preparation
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -B -I -S tools/release_prepare.py --repository $pwd.Path --commit $releaseCommit --output $releaseOutput --build-python $buildPython --verify-only --roundtrip --private-preparation
+          & $env:GENESIS_CI_PYTHON -B -I -S tools/release_prepare.py --repository $pwd.Path --commit $releaseCommit --output $releaseOutput --build-python $buildPython --verify-only --roundtrip --private-preparation
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "GENESIS_CHECKED_RELEASE=$releaseOutput" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Verify full source snapshot without Git metadata
@@ -64,7 +84,7 @@ jobs:
           $releaseOutput = $env:GENESIS_CHECKED_RELEASE
           if (-not $releaseOutput -or -not [IO.Path]::IsPathFullyQualified($releaseOutput)) { throw 'Missing verified release output' }
           $snapshot = Join-Path $releaseOutput 'source'
-          $python = (Get-Command python -CommandType Application).Source
+          $python = $env:GENESIS_CI_PYTHON
           foreach ($key in @('GIT_DIR','GIT_WORK_TREE','GIT_COMMON_DIR','GIT_INDEX_FILE','GIT_OBJECT_DIRECTORY','GIT_ALTERNATE_OBJECT_DIRECTORIES','GIT_NAMESPACE','GIT_CONFIG_PARAMETERS','GIT_CONFIG_COUNT','PYTHONHOME','PYTHONPATH')) {
             if ([Environment]::GetEnvironmentVariable($key)) { throw "Unexpected process binding: $key" }
           }
@@ -100,45 +120,62 @@ jobs:
           if ($testExit -ne 0) { exit $testExit }
           if ($verifyExit -ne 0) { exit $verifyExit }
           $lines = @($snapshotLog | ForEach-Object { $_.ToString() -split '\r?\n' })
-          $found = @(); $pending = $null
+          # BEGIN STRICT TEST RESULT PARSER
+          $knownGitWarning = "warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it"
+          $warningIds = @(
+            'test_release_replacement.ReplacementSecurityTests.test_commit_replacement_does_not_change_export',
+            'test_release_replacement.ReplacementSecurityTests.test_tree_replacement_does_not_change_export'
+          )
+          $found = @(); $pending = $null; $pendingKind = $null
           foreach ($line in $lines) {
             if ($pending) {
-              if ($line -cnotmatch '^.+ \.\.\. ok$') { throw 'Non-ok described test result' }
-              $found += $pending; $pending = $null
+              if ($pendingKind -ceq 'git-warning') {
+                if ($line -cne 'ok') { throw 'Known Git warning was not immediately followed by ok' }
+              } elseif ($line -match '(?i)warning' -or $line -cnotmatch '^.+ \.\.\. ok$') {
+                throw 'Non-ok or warning-bearing described test result'
+              }
+              $found += $pending; $pending = $null; $pendingKind = $null
             } elseif ($line -cmatch '^(test_[A-Za-z0-9_]+) \(([^\s()]+)\)(?: \.\.\. (.+))?$') {
               $method = $Matches[1]; $id = $Matches[2]; $status = $Matches[3]
-              if ($id.Split('.')[-1] -cne $method) { throw 'Inconsistent test ID' }
-              if ($status) {
-                if ($status -cne 'ok') { throw 'Non-ok test result' }
+              if ($id.Split([char[]]'.')[-1] -cne $method) { throw 'Inconsistent test ID' }
+              if ($status -ceq 'ok') {
                 $found += $id
-              } else { $pending = $id }
-            } elseif ($line.Contains(' ... ') -or $line -cmatch '^(FAIL|ERROR|FAILED|OK \(|UNEXPECTED|skipped)') { throw 'Unrecognized or non-success test result' }
+              } elseif ($status -ceq $knownGitWarning -and $warningIds -ccontains $id) {
+                $pending = $id; $pendingKind = 'git-warning'
+              } elseif (-not $status) {
+                $pending = $id; $pendingKind = 'description'
+              } else { throw 'Non-ok or unapproved warning test result' }
+            } elseif ($line -ceq '' -or $line -cmatch '^-+$' -or $line -ceq 'OK' -or $line -cmatch '^Ran 289 tests in [0-9]+(?:\.[0-9]+)?s$' -or $line -cmatch '^Socket audit: [0-9]+ parent-process connection attempts, all literal loopback; no hostname lookup$') {
+              # Only the existing runner's summary and socket-audit text are non-results.
+            } else { throw 'Unrecognized or non-success test output' }
           }
           if ($pending -or $found.Count -ne 289 -or @($found | Sort-Object -Unique).Count -ne 289 -or @(Compare-Object $expected $found -CaseSensitive).Count) { throw 'Individual test results differ' }
           if (@($found | Where-Object { $_.StartsWith('test_release_replacement.ReplacementSecurityTests.') }).Count -ne 6) { throw 'Six replacement results missing' }
           if (@($lines | Where-Object { $_ -cmatch '^Ran 289 tests in [0-9]+(?:\.[0-9]+)?s$' }).Count -ne 1 -or @($lines | Where-Object { $_ -ceq 'OK' }).Count -ne 1) { throw 'Exact test summary missing or duplicated' }
+          # END STRICT TEST RESULT PARSER
           Write-Output 'NO_GIT_FULL_SUITE=289; REPLACEMENT=6; SOURCE_AND_ARTIFACTS_UNCHANGED=true'
       - name: Install verified wheel and verify entry points (offline)
         run: |
           $verifiedWheel = @(Get-ChildItem -LiteralPath (Join-Path $env:GENESIS_CHECKED_RELEASE 'dist') -Filter '*.whl' -File)
           if ($verifiedWheel.Count -ne 1) { throw 'Expected one verified wheel' }
-          python -m pip install --disable-pip-version-check --no-index --no-deps $verifiedWheel[0].FullName
+          & $env:GENESIS_CI_PYTHON -m pip install --disable-pip-version-check --no-index --no-deps $verifiedWheel[0].FullName
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -I tools/check_loopback_tests.py --installed
+          & $env:GENESIS_CI_PYTHON -I tools/check_loopback_tests.py --installed
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -I -m genesis
+          & $env:GENESIS_CI_PYTHON -I -m genesis
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           genesis-demo
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify installed persistence console (temporary synthetic data)
-        run: python -I tools/check_persistence_entry.py
+        run: |
+          & $env:GENESIS_CI_PYTHON -I tools/check_persistence_entry.py
       - name: Verify installed synthetic Ollama protocol console (no Ollama)
         run: genesis-ollama-demo
       - name: Check whitespace
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $false
-          python -I -S tools/check_ci_diff.py
+          & $env:GENESIS_CI_PYTHON -I -S tools/check_ci_diff.py
           $diffExit = $LASTEXITCODE
           if ($diffExit -ne 0) { exit $diffExit }
           if ($env:GITHUB_EVENT_NAME -ceq 'push') {
