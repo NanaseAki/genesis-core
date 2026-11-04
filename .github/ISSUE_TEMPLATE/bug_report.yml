@@ -3,7 +3,7 @@ description: 仅提交脱敏、可复现的工程问题；安全或隐私内容�
 body:
   - type: markdown
     attributes:
-      value: 请先阅读 [SECURITY.md](https://github.com/NanaseAki/genesis-core/blob/main/SECURITY.md)，按其中的临时邮箱安排私密报告；邮件投递与收信尚未验证，GitHub 私密漏洞报告（PVR）也尚未启用和验证。不要在此上传数据库、真实聊天、凭据、伙伴档案或原始私有日志。
+      value: 安全或隐私问题请先阅读 [SECURITY.md](https://github.com/NanaseAki/genesis-core/blob/main/SECURITY.md)，按其中的私密渠道报告；PVR 已启用，原临时安全报告邮箱仍保留，通知验证边界见该文件。本模板仅用于可公开的合成工程问题。不要在此上传漏洞细节、数据库、真实聊天、凭据、伙伴档案或原始私有日志。
   - type: checkboxes
     id: synthetic
     attributes:

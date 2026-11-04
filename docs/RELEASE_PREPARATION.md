@@ -1,12 +1,12 @@
 # 受控源码快照与发行物检查
 
-状态：P1 与 P2-A 已审查、远端验收并合并，R4 在受控边界内技术关闭；P2-A 历史基线为两版各 270 项源码/安装测试。Apache-2.0 及许可证专项校验已实施，原字节干净基线已按批准的修订合同完成 Python 3.12/3.13 本地限定验收，各 289 项完整测试（其中 6 项 replacement）。本候选仅完成文档与有限 CI 静态适配，修改后文件集尚未重新测试或构建；新目标首次 Push/CI 和公开发行仍待单独验收。工具不建公共仓库或上传内容。
+状态：P1 与 P2-A 已审查、远端验收并合并，R4 在受控边界内技术关闭；P2-A 历史基线为两版各 270 项源码/安装测试。Apache-2.0 及许可证专项校验已实施，原字节干净基线已按批准的修订合同完成 Python 3.12/3.13 本地限定验收，各 289 项完整测试（其中 6 项 replacement）。参考提交 `e34dd48c146dd1282e482273729972c1f03f1cdc` 的双版本远端 CI 已核验通过，仓库现已公开；本次状态文档修订仍仅完成静态核验，修改后文件集尚未重新测试或构建。公开仓库不等于批准发行软件包；工具不建公共仓库或上传内容。
 
 该本地验收采用显式审计入口，原始输出按调用边界记录，未补齐旧 pip 内部逐写入者归属；默认 HTTP console 的原临时现场未保留，独立留存场景不能替代它。四项启动 flags 与固定子进程环境仅按锁定启动链作条件推导，未观察值不作已观察事实；不声明操作系统级全进程、文件或网络隔离。既有失败与未知记录保留，成功结果不回填历史缺失证据。
 
 所有者已批准 Copyright 2026 NanaseAki，仅适用于有权许可的原创部分；GitHub Python.gitignore 前 220 行保持 CC0 来源。正式许可证为 [LICENSE](../LICENSE)，范围及来源限制见 [许可说明](LICENSE_OPTIONS.md)。当前没有必须创建 NOTICE 的已识别适用通知，故没有 NOTICE；工具不接受未批准 NOTICE。贡献按已确认 Apache-2.0 政策，初期无 CLA/DCO。
 
-旧仓库按既定方案独立保留 Private；未来独立快照/公共唯一主线方案已确认，目标仓库及 PVR 状态须在相应阶段核实，本候选不声明公开入口或 PVR 已启用；真实 Ollama/GPU 未验收。LICENSE 不等于 Public、Release 或 PyPI 操作授权，不宣称全部原创或完全清权。
+旧仓库按既定方案独立保留 Private；独立快照方案已实施，NanaseAki/genesis-core 已公开并作为 Core 的唯一公开开发主线。PVR 已启用，合成报告提交与所有者查看已验证，通知及临时安全邮箱的保留边界见 [SECURITY.md](../SECURITY.md)；不宣称原完整通知验收通过。真实 Ollama/GPU 未验收。LICENSE 与仓库公开均不等于 Release 或 PyPI 操作授权，不宣称全部原创或完全清权。
 
 ## 批准边界
 
@@ -58,13 +58,13 @@ py -3.13 -B -I -S tools/check_release.py --commit $sourceCommit --build-python $
 
 该检查在临时副本复现旧发现规则将两个私有模块装包，再验证新流程排除全部合成 Canary，并注入额外源码/包成员、篡改 console/setup/SOURCES/comment、许可正文/许可元数据及非零 tar 目录并重算收据，验证实际校验会失败；同时验证合法 sdist 到 wheel 的重建。临时 Git 历史全部为合成身份，不复制私有历史，结束清理。普通单元测试无需构建后端；真实构建检查是另一步，不能用单元测试通过冒充已经执行。
 
-Windows CI 在 P1 已实际完成双版本源码测试、真实 Canary、受控构建、verify-only、安全重建、验证后 wheel 的离线安装和既有入口验收。CI 先从 PyPI 安装精确版本 setuptools==84.1.0 并核对实际版本；该联网 bootstrap 与后续离线检查分开，不宣称版本固定等同供应链已完整验证。新独立目标的首次 Push/CI 尚待验收，不能把历史成功或原字节基线本地验收沿用为本候选的远端结果；分发物 hash 锁定另列改进，本候选仅增补无 .git 全量步骤与首次根 Push 的白名单事件日志，改动尚未动态验证。
+Windows CI 在 P1 已实际完成双版本源码测试、真实 Canary、受控构建、verify-only、安全重建、验证后 wheel 的离线安装和既有入口验收。CI 先从 PyPI 安装精确版本 setuptools==84.1.0 并核对实际版本；该联网 bootstrap 与后续离线检查分开，不宣称版本固定等同供应链已完整验证。新独立仓库的参考提交 `e34dd48c146dd1282e482273729972c1f03f1cdc` 已通过 [双版本 CI](https://github.com/NanaseAki/genesis-core/actions/runs/41650092902)，包含无 `.git` 全量步骤；这是该准确提交的证据，不自动覆盖本次文档修订。首次根 Push 的原始事件字段仍缺失，限定替代验收见下文；分发物 hash 锁定仍另列改进。
 
 解包源码的测试用独立临时合成 Git fixture 验证数据目录拒绝，不要求候选自身含 .git，也不得向候选写运行数据。验收时除 checkout 与验证后 wheel 安装测试，还运行无 .git 快照的完整双版本测试，再次 verify-only 确认测试没有改变批准文件集合。
 
-本候选的 CI 在 verify-only/roundtrip 成功后、wheel 安装前，从同一次 releaseOutput/source 运行原完整入口；执行前和返回后均以固定 commit 再次 verify-only，拒绝额外文件、摘要漂移、链接或 Git 仓库祖先。按当前测试布局从源码文本推导完整方法 ID，核对 289 个唯一成功结果及其中 6 个 replacement，不以单一退出码或汇总行替代。测试输出是解码后合并的 CI 文本，未声明独立原始双流；超时与 runner 中断仍受平台约束，未完成的后验检查不能算通过。这一新增流程尚未动态验证。
+工作流在 verify-only/roundtrip 成功后、wheel 安装前，从同一次 releaseOutput/source 运行原完整入口；执行前和返回后均以固定 commit 再次 verify-only，拒绝额外文件、摘要漂移、链接或 Git 仓库祖先。按当前测试布局从源码文本推导完整方法 ID，核对 289 个唯一成功结果及其中 6 个 replacement，不以单一退出码或汇总行替代。测试输出是解码后合并的 CI 文本，未声明独立原始双流；超时与 runner 中断仍受平台约束，未完成的后验检查不能算通过。上述流程已在所列参考提交的双版本 CI 中通过，本次文档修订未重新运行。
 
-新仓库首次默认分支 Push 必须满足严格根提交条件：全零 before、created=true、默认 ref、after/checkout SHA/实际 HEAD 一致，且原始 commit header 无 parent。差异工具使用独立的 `diff-tree --root --check -r` 检查全部新增文件，浅克隆伪根或其他缺失基线不回退；普通 Push/PR 的基线规则保留。本候选在原检查成功后补充限定字段日志，不打印完整事件、环境或提交作者；日志只在真实首次默认分支根 Push 路径产生。本候选仍无该真实事件或 CI 运行结果，不沿用历史合成事件结果作为证明。
+新仓库首次默认分支 Push 的设计要求为严格根提交条件：全零 before、created=true、默认 ref、after/checkout SHA/实际 HEAD 一致，且原始 commit header 无 parent。差异工具使用独立的 `diff-tree --root --check -r` 检查全部新增文件，浅克隆伪根或其他缺失基线不回退；普通 Push/PR 的基线规则保留。工作流设计了检查成功后的限定字段日志，不打印完整事件、环境或提交作者；日志只在真实首次默认分支根 Push 路径产生。历史首次根 Push 的原始事件字段未取得，所有者已接受推送回执、远端提交及根差异核验作为限定替代证据；这不等于复原原始事件，首次 CI 失败记录仍保留，也不以历史合成事件或后续普通 Push 的成功补证。
 
 ## 元数据的独立可信依据
 
@@ -90,4 +90,4 @@ tar 目录在原始记录和上层 tarfile 最终成员解释中均必须 size �
 py -3.12 -B -I -S tools/release_prepare.py --repository (Resolve-Path .).Path --commit $sourceCommit --output $output --build-python $buildPython --verify-only --roundtrip --private-preparation
 ```
 
-解释器、审核过的规则/源码与构建后端是可信边界，不声称通用恶意后端沙箱或抵抗本机恶意竞态。记录验证工具的 Python 与真正构建解释器版本；两者可以显式不同。方向决定已完成，公开仍需独立复审、最终许可/来源范围复核、目标提交身份实检、目标/PVR 安全验收和另行发布授权。
+解释器、审核过的规则/源码与构建后端是可信边界，不声称通用恶意后端沙箱或抵抗本机恶意竞态。记录验证工具的 Python 与真正构建解释器版本；两者可以显式不同。仓库已公开不改变后续候选仍需独立复审、许可/来源范围复核和准确提交身份实检的要求；PVR 状态与通知验证边界见 SECURITY.md，软件包发布仍需另行授权。
