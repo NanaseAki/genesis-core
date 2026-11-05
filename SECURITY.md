@@ -1,6 +1,6 @@
 # 安全与隐私报告
 
-当前仅支持合成开发与协议验证，尚未启用正式个人伙伴数据。数据库没有完整备份恢复、加密或隐私删除工具；不要把当前 Alpha 准备版本作为正式个人数据保管系统。
+当前支持合成开发、协议验证及用户显式选择的本地预览，默认桌面会话不保存，尚未启用正式个人伙伴数据。选择 `local_preview` 后会明文保存已接收输入（含失败和未完成请求）、回复及状态；手动数据库备份与恢复到新目录也为明文，不等于完整环境备份、加密或隐私删除工具。不要把当前预览作为正式个人数据保管系统；具体范围见 [本地预览](docs/LOCAL_PREVIEW.md) 和 [备份边界](docs/LOCAL_BACKUP.md)。
 
 NanaseAki/genesis-core 仓库已公开，GitHub Private Vulnerability Reporting（PVR）已启用。安全漏洞可通过仓库 Security 页面中的 Report a vulnerability 私密提交，由所有者 NanaseAki 负责接收和处理。原临时安全邮箱仍保留，具体安排与尚未完成的验证见下文；不要为报告漏洞创建公开 Issue、PR 或公开 advisory。
 

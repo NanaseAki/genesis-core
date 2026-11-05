@@ -4,11 +4,13 @@
 
 初始不编造个人经历、固定兴趣或具体性格。偏好形成需要真实互动证据、修订记录和长期验证。
 
-## 当前状态：独立 Core 已公开，合成开发阶段
+## 当前状态：独立 Core 已公开，本地预览候选
 
 M1、M2-A、M2-B1、Open Source Preparation P1 和 P2-A 已验收合并。P2-A 历史基线通过 Windows Python 3.12/3.13 各 270 项源码与安装回归；R4 在受控发行边界内技术关闭。Apache-2.0、项目归属、贡献政策和许可证专项发行校验已实施。
 
-原字节干净基线已按批准的修订验收合同通过 Python 3.12/3.13 本地限定验收，各 289 项完整测试（其中 6 项 replacement）。参考提交 `e34dd48c146dd1282e482273729972c1f03f1cdc` 的双版本远端 CI 已核验通过，具体范围及首次根推送事件字段的缺口见下文“Windows CI 的提交范围”。本次公开状态文档修订基于该参考提交，仅完成静态核验，尚未对修改后文件集重新运行测试、构建或 CI；参考提交与历史基线结果不构成本修订的动态验收，也不代表软件包发行获准。验收范围与证据限制见 [发行准备说明](docs/RELEASE_PREPARATION.md)。
+原字节干净基线已按批准的修订验收合同通过 Python 3.12/3.13 本地限定验收，各 289 项完整测试（其中 6 项 replacement）。参考提交 `e34dd48c146dd1282e482273729972c1f03f1cdc` 的双版本远端 CI 已核验通过，具体范围及首次根推送事件字段的缺口见下文“Windows CI 的提交范围”。此前公开状态文档修订当时只完成静态核验；这些历史结果不自动覆盖后续候选，也不代表软件包发行获准。验收范围与证据限制见 [发行准备说明](docs/RELEASE_PREPARATION.md)。
+
+本候选实现已完成 Windows Python 3.12/3.13 各 467 项源码及无 `.git` 快照回归、逐项测试 ID 核对，以及两版离线 wheel/sdist 构建、Canary 和重建校验。独立 Python 3.13 原生窗口验收使用合成数据，覆盖备份、验证、恢复后显式打开，以及当前显示缩放下默认、最小和最大化尺寸的滚动与键盘操作；不外推到其他平台、显示缩放、真实用户数据或模型质量。远端 CI 以本候选 PR 的精确提交检查记录为准；本地验收不替代远端结果。变更后的文件集合须重新核对，旧收据不自动覆盖后续改动。
 
 所有者已确认 Apache-2.0、NanaseAki 与本人核实的 GitHub noreply、独立干净快照方案 B，以及优先 PVR。旧仓库按既定方案独立保留 Private，NanaseAki/genesis-core 已公开并作为 Core 的唯一公开开发主线，不继承旧 Git/GitHub 附属历史。PVR 已启用并完成合成报告提交与所有者查看测试；站内评论通知已收到，首次报告提醒和邮件尚未验证，临时安全邮箱继续保留，详见 [安全报告边界](SECURITY.md)。仓库公开不等于软件包 Release/PyPI 发布或其他操作获准。项目独立开发，不代表 Neuro-sama、AIRI、Live2D 或 Ollama 官方。
 
@@ -17,7 +19,7 @@ M1、M2-A、M2-B1、Open Source Preparation P1 和 P2-A 已验收合并。P2-A �
 - Python `src` 包结构；运行时零第三方依赖。
 - 稳定、由宿主明确提供的伙伴 UUID；独立于模型名称。
 - 同步文本模型契约与确定性 `FakeModel`。
-- 非流式 Ollama `/api/chat` 适配器：显式回环 IP、严格回复验证、有限错误分类；通过合成 HTTP 服务验收，未调用真实 LLM。
+- 非流式 Ollama `/api/chat` 适配器：显式回环 IP、严格回复验证、有限错误分类；既有验收使用合成 HTTP 服务，真实 LLM 的执行结果须独立记录。
 - 有界的 chunked framing/终止校验、独立响应流关闭、公开异常图脱敏及跨版本 authority 校验，已通过合成回归和限定复审。
 - 内存会话、不可变快照、成功请求去重、显式失败与重试。
 - 观察、推断、成长候选的不同类型与来源引用。
@@ -30,26 +32,38 @@ M1、M2-A、M2-B1、Open Source Preparation P1 和 P2-A 已验收合并。P2-A �
 - 仓库外数据根路径；仅有合成开发数据演示，未正式启用真实伙伴身份。
 - Windows GitHub Actions 工作流配置。远端 CI 结果须以实际运行记录为准。
 
-**尚未实现**：记忆记录存储/检索、成长候选生成/接受、Day 0 独立导出包、完整备份恢复、schema 升级器、隐私删除工具、模型迁移评估。
+**上述公开基线尚未实现**：记忆记录存储/检索、成长候选生成/接受、Day 0 独立导出包、完整备份恢复、schema 升级器、隐私删除工具、模型迁移评估。本地候选的预览数据库备份范围另见下文，不能反推历史公开版本已有该能力。
 
 **后续计划**：完成公开后的文档同步和独立复核；真实本地模型与基准需要单独授权，流式输出、取消、严格总时限另行实现。M3 验证记忆和成长；M4 验证完整备份恢复与迁移；之后考虑主动互动、AIRI、语音、Live2D 和游戏。正式个人伙伴数据尚未启用。
 
 **尚未验证**：真实模型质量、GPU 性能、跨模型行为连续性、长期偏好形成效果、AIRI 接入可行性。
 
-默认演示仍为 FakeModel；HTTP 演示默认启动自己的随机端口合成服务，不连接已有 Ollama。真实服务访问要求同时显式启用 `--real-service --endpoint --model`；本轮没有执行该模式。M1 内存路径退出后丢失会话；SQLite 合成路径能跨进程恢复已提交数据。已验证持久化不代表完成备份恢复。
+默认演示仍为 FakeModel；`tools/run_ollama_demo.py` 默认启动自己的随机端口合成服务，不连接已有 Ollama。该 HTTP 演示访问真实服务要求同时显式启用 `--real-service --endpoint --model`，执行须按真实服务验收条件单独记录。M1 内存路径退出后丢失会话；SQLite 合成路径能跨进程恢复已提交数据。已验证持久化不代表完成备份恢复。
+
+本地候选新增 [桌面聊天预览](docs/DESKTOP.md)：使用 Tkinter，默认临时内存会话和合成后端；可显式配置已独立核查的本地 Ollama。新的 [本地预览持久化候选](docs/LOCAL_PREVIEW.md) 单独使用 `local_preview` 分类和文件，明确选择后以明文保存会话；真实用户输入不能标为合成开发数据。它不创建正式伙伴，不迁移旧合成库，尚未发布。服务核查确认、恢复历史或成功回执重放都不证明当前模型已被调用或服务已连接。
+
+本轮另有 [本地预览备份候选](docs/LOCAL_BACKUP.md)：用户手动创建一致 SQLite 快照、验证备份，再恢复到不存在的新目录；保留身份与 Day 0，不覆盖原库，不自动打开或重试。备份为明文，包含已接收但失败或未完成的输入，不包含模型、配置或未发送草稿；尚无加密、隐私删除、分叉合并或完整环境恢复。候选改动和真实服务测试须分别记录验收；新增备份页的无窗口回归不能代替实窗验收，也不能沿用上面的历史基线结论。
 
 ## Windows PowerShell：直接离线测试
 
-前提：已安装对应 CPython 版本，Git 在 PATH 中（CI 回归测试需要它）。以下分别验收 Python Launcher 中的 3.12/3.13，在仓库根目录执行：
+前提：已安装对应 CPython 版本且可导入 Tkinter，Git 在 PATH 中，并有 `pwsh` 或 Windows PowerShell（CI 结果解析回归需要它）。完整自动回归不创建原生窗口；核心运行没有 PowerShell 依赖。以下分别验收 Python Launcher 中的 3.12/3.13，在仓库根目录执行：
 
 ```powershell
 py -3.12 -B -I -S tools/check_loopback_tests.py
 py -3.13 -B -I -S tools/check_loopback_tests.py
 ```
 
-这些命令无需安装项目、公网、Ollama、CUDA 或 GPU。HTTP 测试进行真实回环通信；审计守卫拒绝主进程非回环连接和主机名解析，HTTP 重启子进程有独立守卫。其余子进程只运行本地 Git、SQLite 和 FakeModel，审计不宣称覆盖 OS/全部子进程。`tools/run_tests.py` 原入口仍可用。测试和临时 Git 历史全部为合成内容，不修改用户配置。
+这些命令无需安装项目、公网、Ollama、CUDA 或 GPU。HTTP 测试进行真实回环通信；审计守卫拒绝主进程非回环连接和主机名解析，HTTP 重启子进程有独立守卫。其他合成回归涉及本地 Git、SQLite、FakeModel 及 CI 解析所需的 PowerShell，审计不宣称覆盖 OS/全部子进程。`tools/run_tests.py` 原入口仍可用。测试和临时 Git 历史全部为合成内容，不修改用户配置。
 
 ## 安装与演示
+
+桌面预览可直接从源码启动，无需先安装项目：
+
+```powershell
+py -3.12 -B -I -S tools/run_desktop.py
+```
+
+需要当前 Python 安装包含 Tkinter/Tcl/Tk。默认使用离线 `FakeModel`，验收请输入合成测试内容；临时会话不等于正式个人伙伴。真实服务模式还要求显式端点、精确模型名和独立核查确认，默认不会连接现有 Ollama。启动、操作与验证边界见 [桌面预览说明](docs/DESKTOP.md)。
 
 ```powershell
 py -3.12 -m venv .venv
@@ -59,7 +73,7 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\genesis-demo.exe
 ```
 
-演示始终使用固定合成输入，输出 `Fake response: synthetic hello`；不接受真实聊天输入。
+以上 `python -m genesis` 和 `genesis-demo` 命令始终使用固定合成输入，输出 `Fake response: synthetic hello`；不接受交互输入。桌面预览则接受手动输入的合成测试文本。
 
 首次安装的构建隔离环境可能从包索引获取 `setuptools`，它是构建依赖，不是模型或运行时依赖。若当前 Python 环境已有固定的 `setuptools==84.1.0` 构建后端，可离线安装：
 
@@ -103,6 +117,7 @@ src/genesis/
   data_paths.py        仓库外数据根解析
   day0.py              规范初始状态与摘要验证
   storage/             SQLite schema、事务、事件与尝试账本
+  storage/backup.py    本地预览快照、验证与恢复到新目录
   models/contracts.py  模型输入/输出与失败契约
   models/fake.py       合成测试模型
   models/ollama.py     回环 HTTP 模型适配器，无状态写权限
@@ -113,6 +128,10 @@ src/genesis/
   adapters/persistence_demo.py  合成持久化演示
   adapters/ollama_demo.py       默认合成 HTTP 演示
   adapters/synthetic_ollama.py  测试协议服务，不是 LLM
+  adapters/desktop.py          Tkinter 聊天与本地预览数据操作
+  adapters/desktop_backend.py  显式后端配置与本地服务确认
+  adapters/desktop_worker.py   串行工作线程与桌面事件
+  adapters/desktop_data_worker.py  独立备份、验证与恢复任务线程
 tests/                 合成场景、契约与边界测试
 tools/run_tests.py     无安装测试入口
 ```
@@ -145,7 +164,9 @@ PR 合并检出与 head SHA 的区别见 [GitHub 事件文档](https://docs.gith
 
 显式创建 SQLiteStore 时，默认数据根为 Windows `%LOCALAPPDATA%\Genesis`，支持 `GENESIS_DATA_ROOT` 与显式绝对路径覆盖；检查原路径和解析后的路径，拒绝普通 Git 工作区及常规裸仓库内部。裸仓库识别结合 HEAD、objects、refs/packed-refs 与 core.bare 配置，不强制安装 Git。导入包和原 M1 演示均不创建数据库。M2-A 数据文件固定为 `genesis-synthetic.sqlite3`，Day 0 标记为合成开发数据。默认回复策略不是 Python 沙箱，存储/模型适配器属于可信宿主代码。
 
-现有实现保持物理 v1 schema 和 Day 0 格式；已有 v1 数据若包含文本契约禁止的内容，将明确拒绝打开，文件保持原样，不自动清洗或迁移。具体规则见 [持久化契约](docs/PERSISTENCE.md)。
+以上默认目录与合成标记属于原 `SQLiteStore(root)` 入口。本地预览候选要求显式绝对数据根和 `data_kind="local_preview"`、`mode="create"` 或 `"open"`，使用独立 `genesis-local-preview.sqlite3`；新建只接受不存在或除合法普通空 `.genesis-initialization.lock` 外为空的目录，打开缺失库不会创建替代数据。明文保存包含已接收但失败或未完成的输入。恢复不会自动生成，未完成请求须明确选择后按同 ID、原文重试。数据格式、分类互斥和未知结果边界见 [本地预览候选](docs/LOCAL_PREVIEW.md)。
+
+两个数据分类均保持物理 schema v1；原合成库保留 Day 0 format 1，本地预览使用独立的 Day 0 format 2 和 GLP1 应用标识，不迁移旧库。已有 v1 数据若包含文本契约禁止的内容，将明确拒绝打开，不自动清洗或迁移。具体规则见 [持久化契约](docs/PERSISTENCE.md)。
 
 ## 私有发行准备
 
@@ -155,6 +176,9 @@ PR 合并检出与 head SHA 的区别见 [GitHub 事件文档](https://docs.gith
 
 ## 项目文档
 
+- [桌面聊天预览与验收边界](docs/DESKTOP.md)
+- [本地预览数据分类、保存与恢复候选](docs/LOCAL_PREVIEW.md)
+- [本地预览备份、验证与恢复到新目录候选](docs/LOCAL_BACKUP.md)
 - [愿景与边界](docs/VISION.md)
 - [架构与接口契约](docs/ARCHITECTURE.md)
 - [M2-A SQLite schema、事务与恢复边界](docs/PERSISTENCE.md)

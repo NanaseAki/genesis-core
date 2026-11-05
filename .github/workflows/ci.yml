@@ -92,19 +92,16 @@ jobs:
           # and no enclosing worktree/bare repository or linked output ancestor.
           & $python -B -I -S tools/release_prepare.py --repository $checkout --commit $releaseCommit --output $releaseOutput --verify-only --private-preparation
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # These locked tests use top-level classes and four-space test methods.
-          # Derive IDs from text without importing/discovering a second test run.
-          $expected = @(foreach ($file in Get-ChildItem -LiteralPath (Join-Path $snapshot 'tests') -File -Filter 'test_*.py') {
-            $className = $null
-            foreach ($line in [IO.File]::ReadAllLines($file.FullName)) {
-              if ($line -cmatch '^class ([A-Za-z_][A-Za-z0-9_]*)\(') { $className = $Matches[1] }
-              elseif ($line -cmatch '^    def (test_[A-Za-z0-9_]+)\(') {
-                if (-not $className) { throw 'Unbound test method' }
-                $file.BaseName + '.' + $className + '.' + $Matches[1]
-              }
-            }
-          })
-          if ($expected.Count -ne 289 -or @($expected | Sort-Object -Unique).Count -ne 289) { throw 'Test inventory differs from approved baseline' }
+          # BEGIN STRICT TEST INVENTORY
+          # AST reads only direct methods of the approved top-level TestCases;
+          # no test import, discovery or second execution happens here.
+          $approvedCount = 467
+          $inventoryText = @(& $python -B -I -S (Join-Path $snapshot 'tools/ci_test_inventory.py') --tests (Join-Path $snapshot 'tests'))
+          if ($LASTEXITCODE -ne 0 -or $inventoryText.Count -ne 1) { throw 'Static test inventory request failed' }
+          $expected = @($inventoryText[0] | ConvertFrom-Json)
+          if ($expected.Count -ne $approvedCount -or @($expected | Sort-Object -Unique).Count -ne $approvedCount) { throw 'Test inventory differs from approved baseline' }
+          if (@($expected | Where-Object { $_ -isnot [string] -or $_ -cnotmatch '^test_[A-Za-z0-9_]+\.[A-Za-z_][A-Za-z0-9_]*\.test_[A-Za-z0-9_]+$' }).Count) { throw 'Invalid static test ID' }
+          # END STRICT TEST INVENTORY
           Push-Location -LiteralPath $snapshot
           try {
             # Tee records decoded, merged CI text; this is not raw binary evidence.
@@ -121,6 +118,7 @@ jobs:
           if ($verifyExit -ne 0) { exit $verifyExit }
           $lines = @($snapshotLog | ForEach-Object { $_.ToString() -split '\r?\n' })
           # BEGIN STRICT TEST RESULT PARSER
+          $summaryPattern = '^Ran ' + $approvedCount + ' tests in [0-9]+(?:\.[0-9]+)?s$'
           $knownGitWarning = "warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it"
           $warningIds = @(
             'test_release_replacement.ReplacementSecurityTests.test_commit_replacement_does_not_change_export',
@@ -145,15 +143,15 @@ jobs:
               } elseif (-not $status) {
                 $pending = $id; $pendingKind = 'description'
               } else { throw 'Non-ok or unapproved warning test result' }
-            } elseif ($line -ceq '' -or $line -cmatch '^-+$' -or $line -ceq 'OK' -or $line -cmatch '^Ran 289 tests in [0-9]+(?:\.[0-9]+)?s$' -or $line -cmatch '^Socket audit: [0-9]+ parent-process connection attempts, all literal loopback; no hostname lookup$') {
+            } elseif ($line -ceq '' -or $line -cmatch '^-+$' -or $line -ceq 'OK' -or $line -cmatch $summaryPattern -or $line -cmatch '^Socket audit: [0-9]+ parent-process connection attempts, all literal loopback; no hostname lookup$') {
               # Only the existing runner's summary and socket-audit text are non-results.
             } else { throw 'Unrecognized or non-success test output' }
           }
-          if ($pending -or $found.Count -ne 289 -or @($found | Sort-Object -Unique).Count -ne 289 -or @(Compare-Object $expected $found -CaseSensitive).Count) { throw 'Individual test results differ' }
+          if ($pending -or $found.Count -ne $approvedCount -or @($found | Sort-Object -Unique).Count -ne $approvedCount -or @(Compare-Object $expected $found -CaseSensitive).Count) { throw 'Individual test results differ' }
           if (@($found | Where-Object { $_.StartsWith('test_release_replacement.ReplacementSecurityTests.') }).Count -ne 6) { throw 'Six replacement results missing' }
-          if (@($lines | Where-Object { $_ -cmatch '^Ran 289 tests in [0-9]+(?:\.[0-9]+)?s$' }).Count -ne 1 -or @($lines | Where-Object { $_ -ceq 'OK' }).Count -ne 1) { throw 'Exact test summary missing or duplicated' }
+          if (@($lines | Where-Object { $_ -cmatch $summaryPattern }).Count -ne 1 -or @($lines | Where-Object { $_ -ceq 'OK' }).Count -ne 1) { throw 'Exact test summary missing or duplicated' }
           # END STRICT TEST RESULT PARSER
-          Write-Output 'NO_GIT_FULL_SUITE=289; REPLACEMENT=6; SOURCE_AND_ARTIFACTS_UNCHANGED=true'
+          Write-Output "NO_GIT_FULL_SUITE=$approvedCount; REPLACEMENT=6; SOURCE_AND_ARTIFACTS_UNCHANGED=true"
       - name: Install verified wheel and verify entry points (offline)
         run: |
           $verifiedWheel = @(Get-ChildItem -LiteralPath (Join-Path $env:GENESIS_CHECKED_RELEASE 'dist') -Filter '*.whl' -File)

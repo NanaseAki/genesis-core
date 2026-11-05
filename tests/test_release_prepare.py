@@ -106,6 +106,34 @@ class ReleasePathTests(unittest.TestCase):
                      "tools/release_prepare.py", "docs/ARCHITECTURE.md", ".github/workflows/ci.yml"):
             self.assertEqual(release.approved_path(path), path)
 
+    def test_exact_backup_source_names_do_not_allow_artifacts_or_lookalikes(self):
+        reviewed = {"docs/LOCAL_BACKUP.md", "src/genesis/storage/backup.py",
+                    "tests/test_backup.py", "tests/test_backup_process.py",
+                    "tests/test_desktop_backup.py"}
+        self.assertEqual(release.BACKUP_SOURCE_PATHS, reviewed)
+        for name in reviewed:
+            with self.subTest(approved=name):
+                self.assertEqual(release.approved_path(name), name)
+        paths = sorted(set(source_files()) | reviewed)
+        self.assertEqual(release.parse_manifest(json.dumps({"format_version": 1, "files": paths}).encode()), paths)
+        rejected = {
+            "docs/local_backup.md", "docs/LOCAL_BACKUP_PRIVATE.md",
+            "src/genesis/storage/BACKUP.py", "src/genesis/storage/backup_copy.py",
+            "src/genesis/backup/storage.py", "tests/test_backup_private.py",
+            "tests/copy/test_backup.py", "tests/test_desktop_backup.py.bak",
+            "src/genesis/storage/snapshot.sqlite3", "src/genesis/storage/manifest.json",
+            "runtime/backups/snapshot.sqlite3", "backups/manifest.json",
+            "backups/.genesis-initialization.lock", "src/genesis/storage/backup.py/data.sqlite3",
+            "docs/LOCAL_BACKUP.md/secret.py", "tests/test_backup.py/../allowed.py",
+            "src/genesis/storage/backup.py:stream", "src/genesis/.storage/backup.py",
+            "src//genesis/storage/backup.py", "src\\genesis\\storage\\backup.py",
+            "src/genesis/storage/chat.py", "src/genesis/storage/secret.py",
+            "src/genesis/storage/.genesis-initialization.lock",
+        }
+        for name in rejected:
+            with self.subTest(rejected=name), self.assertRaises(release.ReleaseError):
+                release.approved_path(name)
+
     def test_traversal_absolute_windows_and_unicode_paths_fail_closed(self):
         for path in ("../module.py", "/module.py", "C:/module.py", "src\\genesis\\x.py", "src//x.py",
                      "src/./x.py", "src/genesis/../x.py", "src/genesis/x.py:stream", "src/genesis/中.py", "src/genesis/x\0.py"):
@@ -156,15 +184,21 @@ class ReleaseSourceTests(unittest.TestCase):
             self.assertEqual(release.read_commit(root, commit)["src/genesis/__init__.py"], files["src/genesis/__init__.py"])
 
     def test_git_symlink_mode_is_rejected_without_following_target(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder); files = source_files(); synthetic_git(root, files)
-            prefix = ["git", "-c", "safe.directory=" + str(root), "-C", str(root)]
-            oid = subprocess.check_output(prefix + ["hash-object", "-w", "--stdin"], input=b"synthetic-target", timeout=10).decode().strip()
-            subprocess.run(prefix + ["update-index", "--cacheinfo", "120000," + oid + ",src/genesis/__init__.py"], check=True, capture_output=True, timeout=10)
-            tree = subprocess.check_output(prefix + ["write-tree"], timeout=10).decode().strip()
-            commit = subprocess.check_output(prefix + ["-c", "user.name=Synthetic", "-c", "user.email=release@example.invalid",
-                "commit-tree", tree, "-m", "Synthetic link"], timeout=10).decode().strip()
-            with self.assertRaises(release.ReleaseError): release.read_commit(root, commit)
+        for name in ("src/genesis/__init__.py", "src/genesis/storage/backup.py"):
+            with self.subTest(path=name), tempfile.TemporaryDirectory() as folder:
+                root = Path(folder); files = source_files()
+                files[name] = b"# Synthetic reviewed source\n"
+                paths = sorted(files)
+                files[release.MANIFEST] = json.dumps({"format_version": 1, "files": paths}).encode()
+                files["MANIFEST.in"] = release.manifest_text(paths)
+                synthetic_git(root, files)
+                prefix = ["git", "-c", "safe.directory=" + str(root), "-C", str(root)]
+                oid = subprocess.check_output(prefix + ["hash-object", "-w", "--stdin"], input=b"synthetic-target", timeout=10).decode().strip()
+                subprocess.run(prefix + ["update-index", "--cacheinfo", "120000," + oid + "," + name], check=True, capture_output=True, timeout=10)
+                tree = subprocess.check_output(prefix + ["write-tree"], timeout=10).decode().strip()
+                commit = subprocess.check_output(prefix + ["-c", "user.name=Synthetic", "-c", "user.email=release@example.invalid",
+                    "commit-tree", tree, "-m", "Synthetic link"], timeout=10).decode().strip()
+                with self.assertRaises(release.ReleaseError): release.read_commit(root, commit)
 
     def test_non_commit_and_mutable_refs_are_rejected(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -223,11 +257,15 @@ class ReleaseSourceTests(unittest.TestCase):
             self.assertFalse((root / "output").exists())
 
     def test_declared_source_size_and_binary_content_fail_closed(self):
-        for data in (b"x" * (release.LIMIT + 1), b"synthetic\0binary", b"\xff"):
-            with tempfile.TemporaryDirectory() as folder:
-                root = Path(folder); files = source_files(); files["src/genesis/__init__.py"] = data
-                commit = synthetic_git(root, files)
-                with self.assertRaises(release.ReleaseError): release.read_commit(root, commit)
+        for name in ("src/genesis/__init__.py", "src/genesis/storage/backup.py"):
+            for data in (b"x" * (release.LIMIT + 1), b"synthetic\0binary", b"\xff"):
+                with self.subTest(path=name, size=len(data)), tempfile.TemporaryDirectory() as folder:
+                    root = Path(folder); files = source_files(); files[name] = data
+                    paths = sorted(files)
+                    files[release.MANIFEST] = json.dumps({"format_version": 1, "files": paths}).encode()
+                    files["MANIFEST.in"] = release.manifest_text(paths)
+                    commit = synthetic_git(root, files)
+                    with self.assertRaises(release.ReleaseError): release.read_commit(root, commit)
 
 
 class ReleaseArchiveTests(unittest.TestCase):
