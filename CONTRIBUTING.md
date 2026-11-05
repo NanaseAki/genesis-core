@@ -4,7 +4,7 @@ Apache-2.0 已实施，见 [LICENSE](LICENSE)。贡献者必须有权提交所�
 
 独立 Core 仓库 NanaseAki/genesis-core 已公开，可通过公开 Issue/PR 提交符合本约定的合成工程问题与贡献；安全问题须按 SECURITY.md 私密报告。当前 fork PR 工作流要求所有外部贡献者经维护者审批后运行，贡献提交不等于自动运行或合并。该设置已刷新核对，但本次未通过外部 PR 实测其执行行为。本政策不是推送、合并或软件包发布授权。第三方例外见 [来源清单](docs/THIRD_PARTY_SOURCES.md)。
 
-支持 Windows 原生 CPython 3.12/3.13，Git 在 PATH 中。核心运行时只使用标准库；无需 Ollama、模型、CUDA 或私人配置。
+支持 Windows 原生 CPython 3.12/3.13，Git 在 PATH 中。完整回归还要求 Python 可导入 Tkinter，并且环境已有 `pwsh` 或 Windows PowerShell，以执行 CI 结果解析测试；测试不会自动安装这些组件，无窗口回归不创建原生窗口。核心运行时只使用标准库，没有 PowerShell 依赖；无需 Ollama、模型、CUDA 或私人配置。
 
 在 Git 工作区根目录运行：
 
