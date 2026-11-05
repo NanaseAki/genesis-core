@@ -118,7 +118,7 @@ class StorageProfileTests(unittest.TestCase):
         for original_kind, other_kind in (("synthetic_development", "local_preview"),
                                           ("local_preview", "synthetic_development")):
             with self.subTest(original=original_kind), tempfile.TemporaryDirectory() as folder:
-                root = Path(folder)
+                root = Path(folder).resolve()
                 with SQLiteStore(root, data_kind=original_kind, mode="create") as store:
                     path = store.path
                 before = path.read_bytes()

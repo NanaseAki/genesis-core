@@ -24,7 +24,7 @@ class DesktopBackupTests(unittest.TestCase):
     def setUp(self):
         folder = tempfile.TemporaryDirectory(prefix="genesis-ui-backup-synthetic-")
         self.addCleanup(folder.cleanup)
-        self.base = Path(folder.name)
+        self.base = Path(folder.name).resolve()
         self.source = self.base / "source"
 
     def finish(self, worker):

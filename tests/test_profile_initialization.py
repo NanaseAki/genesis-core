@@ -31,7 +31,7 @@ def _stored_metadata(store):
 
 def _initializer(root, kind, mode, stop_at, channel):
     """Checkpoint only the database boundary; never barrier while holding a lock."""
-    root = Path(root)
+    root = Path(root).resolve()
     original_open = Path.open
 
     def checkpoint(point, **extra):

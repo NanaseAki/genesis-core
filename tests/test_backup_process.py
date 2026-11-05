@@ -58,7 +58,7 @@ def _operation(source, target, action, stop_at, channel):
     from genesis.storage import backup
 
     _started(channel)
-    target = Path(target)
+    target = Path(target).resolve()
     original_mkdir = Path.mkdir
     original_open = Path.open
     original_manifest = backup._write_manifest

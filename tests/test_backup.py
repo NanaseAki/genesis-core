@@ -31,7 +31,7 @@ class BackupTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.source = self.root / "synthetic-preview"
         with SQLiteStore(self.source, data_kind="local_preview", mode="create") as store:
             self.identity, self.day0 = store.identity, store.day0()

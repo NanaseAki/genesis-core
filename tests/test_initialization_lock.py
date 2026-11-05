@@ -124,7 +124,7 @@ class InitializationLockTests(unittest.TestCase):
         for stage in ("unlock", "close"):
             for error in (RuntimeError("synthetic lock exit failure"), KeyboardInterrupt("synthetic lock exit interrupt"), SystemExit(19)):
                 with self.subTest(stage=stage, error=type(error).__name__), tempfile.TemporaryDirectory() as folder:
-                    root, connections, identities = Path(folder), [], []
+                    root, connections, identities = Path(folder).resolve(), [], []
                     marker = root / locks.LOCK_FILENAME
                     validate, real_open = SQLiteStore._validate, Path.open
 
@@ -139,17 +139,23 @@ class InitializationLockTests(unittest.TestCase):
 
                     failure = (patch.object(locks, "_release", side_effect=error) if stage == "unlock"
                                else patch.object(Path, "open", failed_close))
-                    with failure, patch.object(SQLiteStore, "_validate", validated):
-                        with self.assertRaises(type(error)) as caught:
-                            SQLiteStore(root, data_kind="local_preview", mode="create")
-                    self.assertIs(caught.exception, error)
-                    self.assertEqual(len(connections), 1)
-                    with self.assertRaises(sqlite3.ProgrammingError):
-                        connections[0].execute("SELECT 1")
-                    with SQLiteStore(root, data_kind="local_preview", mode="open") as reopened:
-                        self.assertEqual(reopened.identity, identities[0])
-                    with locks.initialization_lock(root):
-                        pass
+                    try:
+                        with failure, patch.object(SQLiteStore, "_validate", validated):
+                            with self.assertRaises(type(error)) as caught:
+                                SQLiteStore(root, data_kind="local_preview", mode="create")
+                        self.assertIs(caught.exception, error)
+                        self.assertEqual(len(connections), 1)
+                        with self.assertRaises(sqlite3.ProgrammingError):
+                            connections[0].execute("SELECT 1")
+                        with SQLiteStore(root, data_kind="local_preview", mode="open") as reopened:
+                            self.assertEqual(reopened.identity, identities[0])
+                        with locks.initialization_lock(root):
+                            pass
+                    finally:
+                        # Assert product cleanup above, then release any test-owned
+                        # connection even if the injection or an assertion failed.
+                        for connection in connections:
+                            connection.close()
 
     def test_sqlite_primary_interrupt_survives_secondary_connection_close_failure(self):
         for error in (KeyboardInterrupt("synthetic initialization interruption"), SystemExit(20)):
