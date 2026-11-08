@@ -16,6 +16,7 @@ dependencies = []
 genesis-demo = "genesis.adapters.console:main"
 genesis-persistence-demo = "genesis.adapters.persistence_demo:main"
 genesis-ollama-demo = "genesis.adapters.ollama_demo:main"
+genesis-desktop = "genesis.adapters.desktop:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

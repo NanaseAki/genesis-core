@@ -33,6 +33,15 @@ ROOT_FILES = {"README.md", "AGENTS.md", "CONTRIBUTING.md", "SECURITY.md",
               "CODE_OF_CONDUCT.md", "pyproject.toml", "MANIFEST.in", MANIFEST,
               ".gitignore", ".gitattributes", "LICENSE", "NOTICE"}
 FORBIDDEN = re.compile(r"private|secret|credential|audit|delivery|chat|backup|memory_data", re.I)
+# Exact reviewed source names only. Backup artifacts and lookalike paths stay
+# forbidden; these still pass normal path/type checks and pinned-blob review.
+BACKUP_SOURCE_PATHS = frozenset({
+    "docs/LOCAL_BACKUP.md",
+    "src/genesis/storage/backup.py",
+    "tests/test_backup.py",
+    "tests/test_backup_process.py",
+    "tests/test_desktop_backup.py",
+})
 RESERVED = re.compile(r"(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?", re.I)
 
 
@@ -58,7 +67,7 @@ def approved_path(name: str) -> str:
     parts = PurePosixPath(name).parts
     if any(p.startswith(".") for p in (parts[1:] if parts[0] == ".github" else parts)):
         raise ReleaseError("unapproved hidden path")
-    if FORBIDDEN.search(name):
+    if FORBIDDEN.search(name) and name not in BACKUP_SOURCE_PATHS:
         raise ReleaseError("private or operational path forbidden")
     if ((name.startswith("src/genesis/") or name.startswith(("tests/", "tools/")))
             and name.endswith(".py")):

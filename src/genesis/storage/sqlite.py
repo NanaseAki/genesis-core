@@ -23,8 +23,14 @@ from genesis.day0 import make_day0, utc_now, verify_day0
 from genesis.identity import CompanionIdentity
 from genesis.memory import EvidenceOrigin, EvidenceReference, TrustedEvidenceRegistry
 from genesis.models.contracts import Message, Role, validate_model_id
+from genesis.storage._initialization import BACKUP_RESERVED_FILENAMES, LOCK_FILENAME, initialization_lock
 from genesis.storage.schema import APPLICATION_ID, DDL, SCHEMA_VERSION
 from genesis.text import TextContractError, validate_text
+
+
+LOCAL_PREVIEW_APPLICATION_ID = 0x474C5031  # GLP1; separate from synthetic GEN1.
+_DATABASE_NAMES = {"synthetic_development": "genesis-synthetic.sqlite3",
+                   "local_preview": "genesis-local-preview.sqlite3"}
 
 
 class SchemaVersionError(ValueError):
@@ -60,44 +66,207 @@ class AttemptStatus:
     error_code: str | None
 
 
+@dataclass(frozen=True)
+class UnfinishedRequest:
+    """Accepted original input and attempt history, without a committed turn."""
+
+    user_input: UserInput
+    attempts: tuple[AttemptStatus, ...]
+
+
+@dataclass(frozen=True)
+class RecoverySnapshot:
+    """Successful history and unfinished originals from one database snapshot."""
+
+    session: SessionSnapshot
+    unfinished_requests: tuple[UnfinishedRequest, ...]
+
+
+def validate_ledger(connection: sqlite3.Connection, data_kind: str, application_id: int) -> CompanionIdentity:
+    """Validate one caller-owned read snapshot without opening or initializing data."""
+    db = connection
+    if (db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION
+            or db.execute("PRAGMA application_id").fetchone()[0] != application_id):
+        raise SchemaVersionError("unsupported or uninitialized database; no automatic rebuild")
+    if db.execute("PRAGMA integrity_check").fetchall()[0][0] != "ok":
+        raise DataIntegrityError("SQLite integrity check failed")
+    if db.execute("PRAGMA foreign_key_check").fetchall():
+        raise DataIntegrityError("SQLite foreign key check failed")
+    actual = {SQLiteStore._normalized(r[0]) for r in db.execute(
+        "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
+    )}
+    if actual != {SQLiteStore._normalized(sql) for sql in DDL}:
+        raise DataIntegrityError("schema does not match the supported v1 contract")
+    # SQL TEXT/FK checks alone accept identifiers that readers cannot decode.
+    # Every UUID is persisted in the canonical spelling produced by our API.
+    uuid_fields = {
+        "companion": ("companion_id", "day0_event_id"),
+        "sessions": ("session_id",),
+        "events": ("event_id", "session_id", "root_event_id", "parent_event_id"),
+        "requests": ("session_id", "input_id", "user_event_id"),
+        "attempts": ("attempt_id", "session_id", "input_id"),
+        "turns": ("session_id", "input_id", "assistant_event_id", "attempt_id"),
+    }
+    try:
+        for table, fields in uuid_fields.items():
+            for values in db.execute("SELECT " + ",".join(fields) + " FROM " + table):
+                for value in values:
+                    if value is not None and (type(value) is not str or str(UUID(value)) != value):
+                        raise ValueError("noncanonical UUID")
+    except (ValueError, TypeError, AttributeError) as error:
+        raise DataIntegrityError("persisted identifiers violate the UUID contract") from error
+    rows = db.execute("SELECT c.*, e.content, e.kind, e.recorded_utc FROM companion c "
+                      "JOIN events e ON e.event_id=c.day0_event_id").fetchall()
+    if len(rows) != 1 or rows[0]["kind"] != "day0":
+        raise DataIntegrityError("exactly one Day 0 identity is required")
+    row = rows[0]
+    identity = CompanionIdentity(UUID(row["companion_id"]))
+    verify_day0(row["content"], row["day0_sha256"], identity.companion_id,
+                row["created_utc"], expected_data_kind=data_kind)
+    if row["recorded_utc"] != row["created_utc"]:
+        raise DataIntegrityError("Day 0 timestamps disagree")
+    # Structural constraints plus cross-table ledger invariants. Receipt
+    # and history are the SAME turns row, never independently updated.
+    invalid = db.execute("""SELECT 1 FROM sessions s WHERE s.revision !=
+        (SELECT count(*) FROM turns t WHERE t.session_id=s.session_id)
+        OR s.revision != COALESCE((SELECT max(position) FROM turns t
+            WHERE t.session_id=s.session_id), 0)
+        UNION ALL
+        SELECT 1 FROM requests q JOIN events e ON e.event_id=q.user_event_id
+        WHERE e.kind!='user_input' OR e.session_id!=q.session_id
+        UNION ALL
+        SELECT 1 FROM turns t JOIN events e ON e.event_id=t.assistant_event_id
+        JOIN attempts a ON a.attempt_id=t.attempt_id
+        WHERE e.kind!='model_reply' OR e.session_id!=t.session_id
+           OR a.state!='committed' OR a.base_revision!=t.position-1
+        UNION ALL
+        SELECT 1 FROM attempts a WHERE a.state='committed'
+          AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.attempt_id=a.attempt_id)
+        UNION ALL
+        SELECT 1 FROM events e WHERE
+          (e.kind='user_input' AND NOT EXISTS (SELECT 1 FROM requests q WHERE q.user_event_id=e.event_id))
+          OR (e.kind='model_reply' AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.assistant_event_id=e.event_id))
+        UNION ALL
+        SELECT 1 FROM events e JOIN events p ON p.event_id=e.parent_event_id
+        JOIN events r ON r.event_id=e.root_event_id
+        WHERE e.root_event_id!=p.root_event_id OR e.session_id!=p.session_id
+            OR e.session_id!=r.session_id OR r.event_id!=r.root_event_id
+        LIMIT 1""").fetchone()
+    if invalid:
+        raise DataIntegrityError("ledger relationships are inconsistent")
+    # Keep the physical v1 schema unchanged. Older out-of-contract text
+    # is rejected with its file preserved, never silently normalized.
+    try:
+        for value in db.execute("SELECT content FROM events UNION ALL SELECT model_id FROM turns"):
+            validate_text(value[0], field="persisted text")
+    except TextContractError as error:
+        raise DataIntegrityError("persisted text violates the text contract") from error
+    return identity
+
+
 class SQLiteStore:
     """One companion/database, synchronous connection owned by one thread.
 
-    Only synthetic development datasets are initialized in M2-A. Instantiation
-    is explicit; package import and the original console demo do not open it.
+    The default preserves the synthetic v1 dataset. A local preview ledger
+    requires an explicit root and create/open selection, separate filename,
+    application ID and Day 0 profile; its identity is not a formal companion.
+    Instantiation is explicit; package import does not open a database.
     sqlite3.Error and validation errors propagate; existing data is never reset.
     """
 
-    def __init__(self, data_root: str | Path | None = None) -> None:
+    def __init__(self, data_root: str | Path | None = None, *,
+                 data_kind: str = "synthetic_development", mode: str = "open_or_create") -> None:
+        if type(data_kind) is not str or data_kind not in _DATABASE_NAMES:
+            raise ValueError("unsupported database data kind")
+        if type(mode) is not str or mode not in ("open_or_create", "create", "open"):
+            raise ValueError("unsupported database open mode")
+        if data_kind == "local_preview" and (data_root is None or mode == "open_or_create"):
+            raise ValueError("local preview requires an explicit data root and create/open mode")
         if sqlite3.sqlite_version_info < (3, 37, 0):
             raise RuntimeError("SQLite 3.37+ is required for the v1 STRICT schema")
         root = data_root_path(data_root)
-        root.mkdir(parents=True, exist_ok=True)
-        self.path = root / "genesis-synthetic.sqlite3"
+        self._data_kind = data_kind
+        self._application_id = (APPLICATION_ID if data_kind == "synthetic_development"
+                                else LOCAL_PREVIEW_APPLICATION_ID)
+        self.path = root / _DATABASE_NAMES[data_kind]
+        other_name = _DATABASE_NAMES["local_preview" if data_kind == "synthetic_development"
+                                     else "synthetic_development"]
+        other_path = root / other_name
+        # Inspect only the other fixed filename, never the other database's
+        # contents. This prevents accidental mixed roots, not hostile FS races.
+        if other_path.exists() or other_path.is_symlink():
+            raise ValueError("data root contains another database profile")
         if self.path.resolve().parent != root or self.path.is_symlink():
             raise ValueError("database must be directly inside the selected data root")
-        # Exclusive creation distinguishes a genuinely new file from a damaged,
-        # empty or unrelated DB. Never initialize over an existing file.
+        self._connection = None
         try:
-            with self.path.open("xb"):
-                pass
-            new = True
-        except FileExistsError:
-            new = False
+            if mode == "open":
+                # Existing opens never create a marker/root/database. An open
+                # racing first initialization may fail closed; retry explicitly.
+                if not self.path.is_file():
+                    raise FileNotFoundError("selected database does not exist")
+                self._open_database(new=False)
+            elif self.path.exists():
+                if mode == "create":
+                    raise FileExistsError("selected database already exists")
+                self._open_database(new=False)
+            else:
+                self._reject_backup_root(root)
+                # Reject unrelated entries before adding any sidecar. Only the
+                # exact reserved marker may be present; the lock helper checks
+                # it is regular and empty before it can be exempted below.
+                if data_kind == "local_preview" and root.exists() and any(
+                        entry.name != LOCK_FILENAME for entry in root.iterdir()):
+                    raise ValueError("a new local preview requires a new or empty data root")
+                root.mkdir(parents=True, exist_ok=True)
+                with initialization_lock(root):
+                    self._reject_backup_root(root)
+                    # Both profiles share this OS lock. Recheck after acquiring,
+                    # not just before it: only one creator may choose the root.
+                    if other_path.exists() or other_path.is_symlink():
+                        raise ValueError("data root contains another database profile")
+                    if self.path.resolve().parent != root or self.path.is_symlink():
+                        raise ValueError("database must be directly inside the selected data root")
+                    if self.path.exists():
+                        if mode == "create":
+                            raise FileExistsError("selected database already exists")
+                        new = False
+                    else:
+                        if data_kind == "local_preview" and any(
+                                entry.name != LOCK_FILENAME for entry in root.iterdir()):
+                            raise ValueError("a new local preview requires a new or empty data root")
+                        with self.path.open("xb"):
+                            pass
+                        new = True
+                    self._open_database(new=new)
+        except BaseException as error:
+            # This also covers unlock/marker-close failure AFTER initialization:
+            # ownership never transferred to a caller, so close the connection.
+            if self._connection is not None:
+                try:
+                    self._connection.close()
+                except BaseException as cleanup_error:
+                    if isinstance(error, Exception) and not isinstance(cleanup_error, Exception):
+                        raise
+            raise
+
+    @staticmethod
+    def _reject_backup_root(root: Path) -> None:
+        if any((root / name).exists() or (root / name).is_symlink()
+               for name in BACKUP_RESERVED_FILENAMES):
+            raise ValueError("a backup artifact cannot become a data root")
+
+    def _open_database(self, *, new: bool) -> None:
         self._connection = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True,
                                           isolation_level=None, timeout=5)
         self._connection.row_factory = sqlite3.Row
-        try:
-            self._connection.execute("PRAGMA foreign_keys = ON")
-            if self._connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
-                raise DataIntegrityError("SQLite foreign keys are unavailable")
-            self._connection.execute("PRAGMA synchronous = FULL")
-            if new:
-                self._initialize()
-            self._validate()
-        except BaseException:
-            self._connection.close()
-            raise
+        self._connection.execute("PRAGMA foreign_keys = ON")
+        if self._connection.execute("PRAGMA foreign_keys").fetchone()[0] != 1:
+            raise DataIntegrityError("SQLite foreign keys are unavailable")
+        self._connection.execute("PRAGMA synchronous = FULL")
+        if new:
+            self._initialize()
+        self._validate()
 
     def __enter__(self) -> "SQLiteStore":
         return self
@@ -131,11 +300,11 @@ class SQLiteStore:
 
     def _initialize(self) -> None:
         companion_id, event_id, created = uuid4(), uuid4(), utc_now()
-        text, digest = make_day0(companion_id, created)
+        text, digest = make_day0(companion_id, created, data_kind=self._data_kind)
         with self._transaction() as db:
             for statement in DDL:
                 db.execute(statement)
-            db.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+            db.execute(f"PRAGMA application_id = {self._application_id}")
             db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             db.execute("INSERT INTO companion VALUES (1,?,?,?,?)",
                        (str(companion_id), created, str(event_id), digest))
@@ -147,68 +316,15 @@ class SQLiteStore:
 
     def _validate(self) -> None:
         with self._transaction(write=False) as db:
-            if (db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION
-                    or db.execute("PRAGMA application_id").fetchone()[0] != APPLICATION_ID):
-                raise SchemaVersionError("unsupported or uninitialized database; no automatic rebuild")
-            if db.execute("PRAGMA integrity_check").fetchall()[0][0] != "ok":
-                raise DataIntegrityError("SQLite integrity check failed")
-            if db.execute("PRAGMA foreign_key_check").fetchall():
-                raise DataIntegrityError("SQLite foreign key check failed")
-            actual = {self._normalized(r[0]) for r in db.execute(
-                "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"
-            )}
-            if actual != {self._normalized(sql) for sql in DDL}:
-                raise DataIntegrityError("schema does not match the supported v1 contract")
-            rows = db.execute("SELECT c.*, e.content, e.kind, e.recorded_utc FROM companion c "
-                              "JOIN events e ON e.event_id=c.day0_event_id").fetchall()
-            if len(rows) != 1 or rows[0]["kind"] != "day0":
-                raise DataIntegrityError("exactly one Day 0 identity is required")
-            row = rows[0]
-            self._identity = CompanionIdentity(UUID(row["companion_id"]))
-            verify_day0(row["content"], row["day0_sha256"], self._identity.companion_id,
-                        row["created_utc"])
-            if row["recorded_utc"] != row["created_utc"]:
-                raise DataIntegrityError("Day 0 timestamps disagree")
-            # Structural constraints plus cross-table ledger invariants. Receipt
-            # and history are the SAME turns row, never independently updated.
-            invalid = db.execute("""SELECT 1 FROM sessions s WHERE s.revision !=
-                (SELECT count(*) FROM turns t WHERE t.session_id=s.session_id)
-                OR s.revision != COALESCE((SELECT max(position) FROM turns t
-                    WHERE t.session_id=s.session_id), 0)
-                UNION ALL
-                SELECT 1 FROM requests q JOIN events e ON e.event_id=q.user_event_id
-                WHERE e.kind!='user_input' OR e.session_id!=q.session_id
-                UNION ALL
-                SELECT 1 FROM turns t JOIN events e ON e.event_id=t.assistant_event_id
-                JOIN attempts a ON a.attempt_id=t.attempt_id
-                WHERE e.kind!='model_reply' OR e.session_id!=t.session_id
-                   OR a.state!='committed' OR a.base_revision!=t.position-1
-                UNION ALL
-                SELECT 1 FROM attempts a WHERE a.state='committed'
-                  AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.attempt_id=a.attempt_id)
-                UNION ALL
-                SELECT 1 FROM events e WHERE
-                  (e.kind='user_input' AND NOT EXISTS (SELECT 1 FROM requests q WHERE q.user_event_id=e.event_id))
-                  OR (e.kind='model_reply' AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.assistant_event_id=e.event_id))
-                UNION ALL
-                SELECT 1 FROM events e JOIN events p ON p.event_id=e.parent_event_id
-                JOIN events r ON r.event_id=e.root_event_id
-                WHERE e.root_event_id!=p.root_event_id OR e.session_id!=p.session_id
-                    OR e.session_id!=r.session_id OR r.event_id!=r.root_event_id
-                LIMIT 1""").fetchone()
-            if invalid:
-                raise DataIntegrityError("ledger relationships are inconsistent")
-            # Keep the physical v1 schema unchanged. Older out-of-contract text
-            # is rejected with its file preserved, never silently normalized.
-            try:
-                for value in db.execute("SELECT content FROM events UNION ALL SELECT model_id FROM turns"):
-                    validate_text(value[0], field="persisted text")
-            except TextContractError as error:
-                raise DataIntegrityError("persisted text violates the text contract") from error
+            self._identity = validate_ledger(db, self._data_kind, self._application_id)
 
     @property
     def identity(self) -> CompanionIdentity:
         return self._identity
+
+    @property
+    def data_kind(self) -> str:
+        return self._data_kind
 
     def day0(self) -> tuple[str, str]:
         row = self._connection.execute("SELECT e.content,c.day0_sha256 FROM companion c "
@@ -259,6 +375,40 @@ class SQLiteStore:
         """Discover existing sessions without needing an in-memory ID list."""
         return tuple(UUID(row[0]) for row in self._connection.execute(
             "SELECT session_id FROM sessions ORDER BY rowid"))
+
+    @staticmethod
+    def _unfinished_requests(db: sqlite3.Connection, session_id: UUID) -> tuple[UnfinishedRequest, ...]:
+        requests = db.execute("""SELECT q.input_id, e.content FROM requests q
+            JOIN events e ON e.event_id=q.user_event_id
+            WHERE q.session_id=? AND NOT EXISTS (
+                SELECT 1 FROM turns t WHERE t.session_id=q.session_id AND t.input_id=q.input_id)
+            ORDER BY e.sequence""", (str(session_id),)).fetchall()
+        return tuple(UnfinishedRequest(UserInput(UUID(row["input_id"]), row["content"]),
+                     tuple(AttemptStatus(UUID(attempt[0]), attempt[1], attempt[2])
+                           for attempt in db.execute("""SELECT attempt_id,state,error_code FROM attempts
+                               WHERE session_id=? AND input_id=? ORDER BY rowid""",
+                               (str(session_id), row["input_id"])))) for row in requests)
+
+    def unfinished_requests(self, session_id: UUID) -> tuple[UnfinishedRequest, ...]:
+        """Read accepted inputs without success receipts; never retry or fence.
+
+        Request order follows user-event sequence, attempts follow rowid. All
+        rows are read in one transaction. A running attempt is unresolved, not
+        evidence that its process crashed or that server generation stopped.
+        """
+        with self._transaction(write=False) as db:
+            self._require_session(db, session_id)
+            return self._unfinished_requests(db, session_id)
+
+    def recovery_snapshot(self, session_id: UUID) -> RecoverySnapshot:
+        """Read history and unfinished inputs atomically, without executing them.
+
+        A concurrent publication is either visible in both components or neither;
+        callers must not combine separate get_session/unfinished_requests reads
+        when presenting a complete recovered session.
+        """
+        with self._transaction(write=False) as db:
+            return RecoverySnapshot(self._snapshot(db, session_id), self._unfinished_requests(db, session_id))
 
     def _lookup(self, db: sqlite3.Connection, session_id: UUID, user_input: UserInput) -> Turn | None:
         self._require_session(db, session_id)
